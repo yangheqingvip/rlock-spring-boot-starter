@@ -2,6 +2,7 @@ package dawn.dlock.rlock.aspect;
 
 import dawn.dlock.rlock.annotation.Rlock;
 import dawn.dlock.rlock.config.RlockConfig;
+import dawn.dlock.rlock.core.AppContextHolder;
 import dawn.dlock.rlock.core.LockInvoker;
 import dawn.dlock.rlock.core.compensator.LockFailedCompensator;
 import dawn.dlock.rlock.core.lock.LockContext;
@@ -44,7 +45,7 @@ public class RlockAspect {
 	private LockInvoker lockInvoker;
 
 	@Autowired
-	private List<LockFailedCompensator> failedCompensates;
+	private AppContextHolder contextHolder;
 
 	@Autowired
 	private List<LockNameBuilder> lockNameBuilders;
@@ -60,12 +61,7 @@ public class RlockAspect {
 			LockContext context = loadLockContext(joinPoint);
 
 			// 加锁
-			Boolean locked = lockInvoker.lock(context);
-
-			// 加锁异常, 执行失败补偿
-			if (BooleanUtils.isNotTrue(locked)) {
-				locked = doFailed(context);
-			}
+			Boolean locked = doLock(context);
 
 			// 失败补偿执行返回false, 直接抛出异常
 			if (BooleanUtils.isNotTrue(locked)) {
@@ -80,6 +76,17 @@ public class RlockAspect {
 //				log.info("[ZkLock] released lock lockName:{}", context.getLockName());
 //			}
 		}
+	}
+
+	private Boolean doLock(LockContext context) throws Throwable {
+		// 加锁
+		Boolean locked = lockInvoker.lock(context.getKey(), context.getExpire());
+
+		// 加锁异常, 执行失败补偿
+		if (BooleanUtils.isNotTrue(locked)) {
+			locked = doFailed(context);
+		}
+		return locked;
 	}
 
 	/**
@@ -103,7 +110,6 @@ public class RlockAspect {
 		// 构建锁信息
 		return LockContext.builder()
 				.key(key)
-				.locked(false)
 				.rlock(rlock)
 				.build();
 	}
@@ -137,15 +143,15 @@ public class RlockAspect {
 	 */
 	private Boolean doFailed(LockContext context) throws Throwable {
 		try {
-			Class<? extends LockFailedCompensator> compensator = context.getRlock().compensator();
-			for (LockFailedCompensator failedCompensator : this.failedCompensates) {
-				if (failedCompensator.getClass().equals(compensator)) {
-					return failedCompensator.compensate(context);
+			List<? extends LockFailedCompensator> compensates = contextHolder.getBeanList(context.getCompensator());
+			for (LockFailedCompensator compensate : compensates) {
+				if (compensate.compensate(context)) {
+					return true;
 				}
 			}
-			log.warn("Rlock nonsupport LockFailedCompensator: {}, please check or change your config", context.getRlock().compensator().getName());
+			return false;
 		} catch (Exception e) {
-			log.warn(String.format("Rlock invoke  LockFailedCompensator: %s exception", context.getRlock().compensator().getName()), e);
+			log.warn(String.format("Rlock invoke  LockFailedCompensator: %s exception", context.getCompensator().getName()), e);
 		}
 		return Boolean.FALSE;
 	}

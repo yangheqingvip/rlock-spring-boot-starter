@@ -19,6 +19,7 @@
     <modules>
         <module>rlock-spring-boot-starter</module>
         <module>rlock-spring-boot-autoconfigure</module>
+        <module>rlock-spring-boot-samples</module>
     </modules>
 
     <properties>
